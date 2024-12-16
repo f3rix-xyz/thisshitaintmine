@@ -1,6 +1,5 @@
 package sustainico_backend.service;
 
-
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBMapper;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBQueryExpression;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
@@ -11,6 +10,8 @@ import sustainico_backend.Models.*;
 import sustainico_backend.rep.LatestWaterReadingRepository;
 import sustainico_backend.rep.WaterReadingPerDayRepository;
 
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.time.Instant;
 import java.util.*;
 import java.util.logging.Logger;
@@ -62,7 +63,8 @@ public class WaterReadingPerDayService {
                 waterReadingPerDay.setFetchTimestamp(String.valueOf(Instant.now().getEpochSecond()));
 
                 // Update LatestWaterReading
-                LatestWaterReading latestWaterReading = latestWaterReadingRepository.findByDeviceId(latestReading.getDeviceId());
+                LatestWaterReading latestWaterReading = latestWaterReadingRepository
+                        .findByDeviceId(latestReading.getDeviceId());
                 if (latestWaterReading == null) {
                     latestWaterReading = new LatestWaterReading();
                     latestWaterReading.setDeviceId(latestReading.getDeviceId());
@@ -74,10 +76,11 @@ public class WaterReadingPerDayService {
 
                 waterReadingPerDayRepository.save(waterReadingPerDay);
             }
-        } catch (Exception err){
+        } catch (Exception err) {
             System.out.println("Error during the aggregation task : " + err);
         }
-//        System.out.println(Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata")).getTime() + " DAY!");
+        // System.out.println(Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata")).getTime()
+        // + " DAY!");
     }
 
     public List<WaterReadingPerDay> getLatestReadingsForAllDevices() {
@@ -127,7 +130,8 @@ public class WaterReadingPerDayService {
         eav.put(":endTimestamp", new AttributeValue().withS(endReading.getFetchTimestamp()));
 
         DynamoDBQueryExpression<WaterReadingPerDay> queryExpression = new DynamoDBQueryExpression<WaterReadingPerDay>()
-                .withKeyConditionExpression("deviceId = :deviceId and fetchTimestamp between :startTimestamp and :endTimestamp")
+                .withKeyConditionExpression(
+                        "deviceId = :deviceId and fetchTimestamp between :startTimestamp and :endTimestamp")
                 .withExpressionAttributeValues(eav);
 
         List<WaterReadingPerDay> result = dynamoDBMapper.query(WaterReadingPerDay.class, queryExpression);
@@ -143,9 +147,9 @@ public class WaterReadingPerDayService {
             double flowDifference = currentFlowReading - prevFlowReading;
 
             // Update the flowReading and timestamp of the currentReading
-//            prevReading.setFlowReading(Double.toString(flowDifference));
-//            prevReading.setFetchTimestamp(currentReading.getFetchTimestamp());
-//            prevReading.setTimestamp(currentReading.getTimestamp());
+            // prevReading.setFlowReading(Double.toString(flowDifference));
+            // prevReading.setFetchTimestamp(currentReading.getFetchTimestamp());
+            // prevReading.setTimestamp(currentReading.getTimestamp());
 
             WaterReadingPerDay newDayReading = new WaterReadingPerDay();
 
@@ -179,11 +183,11 @@ public class WaterReadingPerDayService {
         eav.put(":endTimestamp", new AttributeValue().withS(Long.toString(adjustedEndTimeInSeconds)));
 
         DynamoDBQueryExpression<WaterReadingPerDay> queryExpression = new DynamoDBQueryExpression<WaterReadingPerDay>()
-                .withKeyConditionExpression("deviceId = :deviceId and fetchTimestamp between :startTimestamp and :endTimestamp")
+                .withKeyConditionExpression(
+                        "deviceId = :deviceId and fetchTimestamp between :startTimestamp and :endTimestamp")
                 .withExpressionAttributeValues(eav);
 
         List<WaterReadingPerDay> result = dynamoDBMapper.query(WaterReadingPerDay.class, queryExpression);
-
 
         DeviceReportResponse report = new DeviceReportResponse();
 
@@ -203,7 +207,6 @@ public class WaterReadingPerDayService {
             // Ensure flowDifference is not less than 0
             flowDifference = Math.max(flowDifference, 0);
             totalUsage = totalUsage + flowDifference;
-
 
             WaterReadingPerDay newDayReading = new WaterReadingPerDay();
 
@@ -225,7 +228,9 @@ public class WaterReadingPerDayService {
         report.setReadings(modifiedReadings);
 
         if (modifiedReadings.size() > 0) {
-//            double totalUsage = Double.parseDouble(result.get(result.size()-1).getFlowReading()) - Double.parseDouble(result.get(0).getFlowReading());
+            // double totalUsage =
+            // Double.parseDouble(result.get(result.size()-1).getFlowReading()) -
+            // Double.parseDouble(result.get(0).getFlowReading());
             totalUsage = Math.max(totalUsage, 0);
             report.setAverageUsage(totalUsage / modifiedReadings.size());
         } else {
@@ -241,7 +246,6 @@ public class WaterReadingPerDayService {
 
         return report;
     }
-
 
     private WaterReadingPerDay getNearestDailyReading(String deviceId, String timestamp, boolean isStart) {
         long timestampInSeconds = Long.parseLong(timestamp);
@@ -279,6 +283,93 @@ public class WaterReadingPerDayService {
 
     private long roundToNearestDay(long timestampInSeconds) {
         return (timestampInSeconds / 86400) * 86400; // 86400 seconds in a day
+    }
+
+    public List<SimplifiedWaterReading> getDailyReadingsForMonth(String deviceId, String date) {
+        try {
+            // Parse the input date (expecting format like "2024-03")
+            SimpleDateFormat yearMonthFormat = new SimpleDateFormat("yyyy-MM");
+            yearMonthFormat.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata"));
+
+            Date parsedDate = yearMonthFormat.parse(date);
+            Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata"));
+            calendar.setTime(parsedDate);
+
+            // Set time to start of month (1st day, 00:00:00)
+            calendar.set(Calendar.DAY_OF_MONTH, 1);
+            calendar.set(Calendar.HOUR_OF_DAY, 0);
+            calendar.set(Calendar.MINUTE, 0);
+            calendar.set(Calendar.SECOND, 0);
+            long startTimestamp = calendar.getTimeInMillis() / 1000;
+
+            // Set time to end of month (last day, 23:59:59)
+            calendar.set(Calendar.DAY_OF_MONTH, calendar.getActualMaximum(Calendar.DAY_OF_MONTH));
+            calendar.set(Calendar.HOUR_OF_DAY, 23);
+            calendar.set(Calendar.MINUTE, 59);
+            calendar.set(Calendar.SECOND, 59);
+            long endTimestamp = calendar.getTimeInMillis() / 1000;
+
+            Map<String, AttributeValue> eav = new HashMap<>();
+            eav.put(":deviceId", new AttributeValue().withS(deviceId));
+            eav.put(":startTimestamp", new AttributeValue().withS(String.valueOf(startTimestamp)));
+            eav.put(":endTimestamp", new AttributeValue().withS(String.valueOf(endTimestamp)));
+
+            DynamoDBQueryExpression<WaterReadingPerDay> queryExpression = new DynamoDBQueryExpression<WaterReadingPerDay>()
+                    .withKeyConditionExpression(
+                            "deviceId = :deviceId and fetchTimestamp between :startTimestamp and :endTimestamp")
+                    .withExpressionAttributeValues(eav);
+
+            List<WaterReadingPerDay> readings = dynamoDBMapper.query(WaterReadingPerDay.class, queryExpression);
+
+            // Format for displaying date
+            SimpleDateFormat dateFormat = new SimpleDateFormat("dd MMM yyyy");
+            dateFormat.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata"));
+
+            Map<Integer, SimplifiedWaterReading> dailyReadings = new TreeMap<>();
+
+            // Process each reading
+            for (WaterReadingPerDay reading : readings) {
+                long timestamp = Long.parseLong(reading.getFetchTimestamp());
+                Calendar readingCal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata"));
+                readingCal.setTimeInMillis(timestamp * 1000);
+                int day = readingCal.get(Calendar.DAY_OF_MONTH);
+
+                // Set the time to the exact day for display
+                Calendar displayCal = (Calendar) calendar.clone();
+                displayCal.set(Calendar.DAY_OF_MONTH, day);
+                String dateStr = dateFormat.format(displayCal.getTime());
+
+                // Keep the latest reading for each day
+                if (!dailyReadings.containsKey(day) ||
+                        Long.parseLong(reading.getFetchTimestamp()) > Long
+                                .parseLong(dailyReadings.get(day).getReading())) {
+                    dailyReadings.put(day, new SimplifiedWaterReading(
+                            dateStr,
+                            reading.getFlowReading()));
+                }
+            }
+
+            // Fill in missing days with zero readings
+            List<SimplifiedWaterReading> result = new ArrayList<>();
+            int daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH);
+            for (int day = 1; day <= daysInMonth; day++) {
+                Calendar displayCal = (Calendar) calendar.clone();
+                displayCal.set(Calendar.DAY_OF_MONTH, day);
+                String dateStr = dateFormat.format(displayCal.getTime());
+
+                result.add(dailyReadings.getOrDefault(day,
+                        new SimplifiedWaterReading(dateStr, "0")));
+            }
+
+            return result;
+
+        } catch (ParseException e) {
+            logger.warning("Error parsing date: " + e.getMessage());
+            return Collections.emptyList();
+        } catch (Exception e) {
+            logger.warning("Error retrieving daily readings: " + e.getMessage());
+            return Collections.emptyList();
+        }
     }
 
 }
