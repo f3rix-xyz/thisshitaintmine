@@ -1,0 +1,35 @@
+name: Deploy to AWS Server
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    types: [closed]
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.AWS_SSH_KEY }}
+          
+      - name: Deploy to AWS server
+        env:
+          AWS_SERVER_IP: ${{ secrets.AWS_SERVER_IP }}
+          AWS_USERNAME: ${{ secrets.AWS_USERNAME }}
+        run: |
+          ssh -o StrictHostKeyChecking=no $AWS_USERNAME@$AWS_SERVER_IP << 'EOF'
+            cd /thisshitaintmine
+            git pull origin master
+            pkill -f 'mvn spring-boot:run'
+            nohup mvn spring-boot:run > output.log 2>&1 &
+          EOF

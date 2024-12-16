@@ -1,0 +1,41 @@
+name: Java Format on Push
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install Google Java Format
+        run: |
+          curl -LJO https://github.com/google/google-java-format/releases/download/v1.15.0/google-java-format-1.15.0-all-deps.jar
+          mkdir -p formatter
+          mv google-java-format-1.15.0-all-deps.jar formatter/google-java-format.jar
+
+      - name: Run Google Java Format
+        run: |
+          find . -name "*.java" | xargs java -jar ./formatter/google-java-format.jar --replace
+
+      - name: Commit changes
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Format code with Google Java Format' || echo "No changes to commit"
+
+      - name: Push changes
+        run: git push origin HEAD:${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
