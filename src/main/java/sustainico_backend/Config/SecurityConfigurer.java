@@ -53,7 +53,8 @@ public class SecurityConfigurer {
                                 "/profile", "/", "/health", "/status", "/device/create",
                                 "/subscriber/create", "/ping", "/newWaterReading/send", "/device/deviceLogin",
                                 "/water/deviceData", "/newWaterReading2/send", "newWaterReading2/latest",
-                                "newWaterReading2/toast", "readingperhour/**", "readingperday/**", "readingpermonth/**")
+                                "newWaterReading2/toast", "readingperhour/**", "readingperday/**", "readingpermonth/**",
+                                "/newWaterReading/**")
                         .permitAll()
                         .anyRequest().authenticated())
                 .sessionManagement(session -> session
