@@ -1,6 +1,5 @@
 package sustainico_backend.service;
 
-
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBMapper;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBQueryExpression;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
@@ -10,6 +9,7 @@ import org.springframework.stereotype.Service;
 import sustainico_backend.Models.*;
 import sustainico_backend.rep.WaterReadingPerMonthRepository;
 
+import java.text.SimpleDateFormat;
 import java.time.Instant;
 import java.util.*;
 import java.util.logging.Logger;
@@ -58,7 +58,7 @@ public class WaterReadingPerMonthService {
                 waterReadingPerMonth.setFetchTimestamp(String.valueOf(Instant.now().getEpochSecond()));
                 waterReadingPerMonthRepository.save(waterReadingPerMonth);
             }
-        } catch (Exception err){
+        } catch (Exception err) {
             System.out.println("Error during the aggregation task : " + err);
         }
         System.out.println(Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata")).getTime() + " MONTH!");
@@ -105,7 +105,9 @@ public class WaterReadingPerMonthService {
 
         DynamoDBQueryExpression<WaterReadingPerMonth> queryExpression = new DynamoDBQueryExpression<WaterReadingPerMonth>()
                 .withKeyConditionExpression("deviceId = :deviceId and #ts between :startTimestamp and :endTimestamp")
-                .withExpressionAttributeNames(Collections.singletonMap("#ts", "fetchTimestamp")) // Using the 'timestamp' attribute
+                .withExpressionAttributeNames(Collections.singletonMap("#ts", "fetchTimestamp")) // Using the
+                                                                                                 // 'timestamp'
+                                                                                                 // attribute
                 .withExpressionAttributeValues(eav);
 
         List<WaterReadingPerMonth> result = dynamoDBMapper.query(WaterReadingPerMonth.class, queryExpression);
@@ -129,11 +131,11 @@ public class WaterReadingPerMonthService {
         eav.put(":endTimestamp", new AttributeValue().withS(Long.toString(adjustedEndTimeInSeconds)));
 
         DynamoDBQueryExpression<WaterReadingPerMonth> queryExpression = new DynamoDBQueryExpression<WaterReadingPerMonth>()
-                .withKeyConditionExpression("deviceId = :deviceId and fetchTimestamp between :startTimestamp and :endTimestamp")
+                .withKeyConditionExpression(
+                        "deviceId = :deviceId and fetchTimestamp between :startTimestamp and :endTimestamp")
                 .withExpressionAttributeValues(eav);
 
         List<WaterReadingPerMonth> result = dynamoDBMapper.query(WaterReadingPerMonth.class, queryExpression);
-
 
         DeviceReportResponse report = new DeviceReportResponse();
 
@@ -153,7 +155,6 @@ public class WaterReadingPerMonthService {
             // Ensure flowDifference is not less than 0
             flowDifference = Math.max(flowDifference, 0);
             totalUsage = totalUsage + flowDifference;
-
 
             WaterReadingPerMonth newMonthReading = new WaterReadingPerMonth();
 
@@ -175,7 +176,9 @@ public class WaterReadingPerMonthService {
         report.setReadings(modifiedReadings);
 
         if (modifiedReadings.size() > 0) {
-//            double totalUsage = Double.parseDouble(result.get(result.size()-1).getFlowReading()) - Double.parseDouble(result.get(0).getFlowReading());
+            // double totalUsage =
+            // Double.parseDouble(result.get(result.size()-1).getFlowReading()) -
+            // Double.parseDouble(result.get(0).getFlowReading());
             totalUsage = Math.max(totalUsage, 0);
             report.setAverageUsage(totalUsage / modifiedReadings.size());
         } else {
@@ -192,10 +195,14 @@ public class WaterReadingPerMonthService {
         return report;
     }
 
-
     private WaterReadingPerMonth getNearestMonthlyReading(String deviceId, String timestamp, boolean isStart) {
         long timestampInSeconds = Long.parseLong(timestamp);
-        long startRange = isStart ? roundToNearestMonth(timestampInSeconds) : timestampInSeconds - 2592000; // 2592000 seconds in 30 days (approximate month)
+        long startRange = isStart ? roundToNearestMonth(timestampInSeconds) : timestampInSeconds - 2592000; // 2592000
+                                                                                                            // seconds
+                                                                                                            // in 30
+                                                                                                            // days
+                                                                                                            // (approximate
+                                                                                                            // month)
         long endRange = isStart ? startRange + 2592000 : timestampInSeconds;
 
         Map<String, AttributeValue> eav = new HashMap<>();
@@ -232,4 +239,95 @@ public class WaterReadingPerMonthService {
         return (timestampInSeconds / 2592000) * 2592000;
     }
 
+    public List<SimplifiedWaterReading> getMonthlyReadingsForYear(String deviceId, String yearStr) {
+        try {
+            int year = Integer.parseInt(yearStr);
+            Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata"));
+            calendar.clear();
+            calendar.set(Calendar.YEAR, year);
+
+            // Set time to start of year (Jan 1, 00:00:00)
+            calendar.set(Calendar.MONTH, Calendar.JANUARY);
+            calendar.set(Calendar.DAY_OF_MONTH, 1);
+            calendar.set(Calendar.HOUR_OF_DAY, 0);
+            calendar.set(Calendar.MINUTE, 0);
+            calendar.set(Calendar.SECOND, 0);
+            long startTimestamp = calendar.getTimeInMillis() / 1000;
+
+            // Set time to end of year (Dec 31, 23:59:59)
+            calendar.set(Calendar.MONTH, Calendar.DECEMBER);
+            calendar.set(Calendar.DAY_OF_MONTH, 31);
+            calendar.set(Calendar.HOUR_OF_DAY, 23);
+            calendar.set(Calendar.MINUTE, 59);
+            calendar.set(Calendar.SECOND, 59);
+            long endTimestamp = calendar.getTimeInMillis() / 1000;
+
+            Map<String, AttributeValue> eav = new HashMap<>();
+            eav.put(":deviceId", new AttributeValue().withS(deviceId));
+            eav.put(":startTimestamp", new AttributeValue().withS(String.valueOf(startTimestamp)));
+            eav.put(":endTimestamp", new AttributeValue().withS(String.valueOf(endTimestamp)));
+
+            Map<String, String> expressionAttributeNames = new HashMap<>();
+            expressionAttributeNames.put("#ts", "timestamp");
+
+            DynamoDBQueryExpression<WaterReadingPerMonth> queryExpression = new DynamoDBQueryExpression<WaterReadingPerMonth>()
+                    .withKeyConditionExpression("deviceId = :deviceId")
+                    .withFilterExpression("#ts between :startTimestamp and :endTimestamp")
+                    .withExpressionAttributeNames(expressionAttributeNames)
+                    .withExpressionAttributeValues(eav);
+
+            List<WaterReadingPerMonth> readings = dynamoDBMapper.query(WaterReadingPerMonth.class, queryExpression);
+
+            // Format for displaying month
+            SimpleDateFormat monthFormat = new SimpleDateFormat("MMMM yyyy");
+            monthFormat.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata"));
+
+            Map<Integer, SimplifiedWaterReading> monthlyReadings = new TreeMap<>();
+
+            // Process each reading
+            for (WaterReadingPerMonth reading : readings) {
+                long timestamp = Long.parseLong(reading.getTimestamp()); // Changed from fetchTimestamp to timestamp
+                Calendar readingCal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata"));
+                readingCal.setTimeInMillis(timestamp * 1000);
+                int month = readingCal.get(Calendar.MONTH);
+
+                // Set the time to the first day of the month for display
+                Calendar displayCal = (Calendar) calendar.clone();
+                displayCal.set(Calendar.MONTH, month);
+                displayCal.set(Calendar.DAY_OF_MONTH, 1);
+                String monthStr = monthFormat.format(displayCal.getTime());
+
+                // Keep the latest reading for each month (comparing timestamps, not
+                // fetchTimestamps)
+                if (!monthlyReadings.containsKey(month) ||
+                        Long.parseLong(reading.getTimestamp()) > Long
+                                .parseLong(monthlyReadings.get(month).getReading())) {
+                    monthlyReadings.put(month, new SimplifiedWaterReading(
+                            monthStr,
+                            reading.getFlowReading()));
+                }
+            }
+
+            // Fill in missing months with zero readings
+            List<SimplifiedWaterReading> result = new ArrayList<>();
+            for (int month = 0; month < 12; month++) {
+                Calendar displayCal = (Calendar) calendar.clone();
+                displayCal.set(Calendar.MONTH, month);
+                displayCal.set(Calendar.DAY_OF_MONTH, 1);
+                String monthStr = monthFormat.format(displayCal.getTime());
+
+                result.add(monthlyReadings.getOrDefault(month,
+                        new SimplifiedWaterReading(monthStr, "0")));
+            }
+
+            return result;
+
+        } catch (NumberFormatException e) {
+            logger.warning("Error parsing year: " + e.getMessage());
+            return Collections.emptyList();
+        } catch (Exception e) {
+            logger.warning("Error retrieving monthly readings: " + e.getMessage());
+            return Collections.emptyList();
+        }
+    }
 }

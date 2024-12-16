@@ -314,9 +314,13 @@ public class WaterReadingPerDayService {
             eav.put(":startTimestamp", new AttributeValue().withS(String.valueOf(startTimestamp)));
             eav.put(":endTimestamp", new AttributeValue().withS(String.valueOf(endTimestamp)));
 
+            Map<String, String> expressionAttributeNames = new HashMap<>();
+            expressionAttributeNames.put("#ts", "timestamp");
+
             DynamoDBQueryExpression<WaterReadingPerDay> queryExpression = new DynamoDBQueryExpression<WaterReadingPerDay>()
-                    .withKeyConditionExpression(
-                            "deviceId = :deviceId and fetchTimestamp between :startTimestamp and :endTimestamp")
+                    .withKeyConditionExpression("deviceId = :deviceId")
+                    .withFilterExpression("#ts between :startTimestamp and :endTimestamp")
+                    .withExpressionAttributeNames(expressionAttributeNames)
                     .withExpressionAttributeValues(eav);
 
             List<WaterReadingPerDay> readings = dynamoDBMapper.query(WaterReadingPerDay.class, queryExpression);
@@ -329,7 +333,7 @@ public class WaterReadingPerDayService {
 
             // Process each reading
             for (WaterReadingPerDay reading : readings) {
-                long timestamp = Long.parseLong(reading.getFetchTimestamp());
+                long timestamp = Long.parseLong(reading.getTimestamp()); // Changed from fetchTimestamp to timestamp
                 Calendar readingCal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata"));
                 readingCal.setTimeInMillis(timestamp * 1000);
                 int day = readingCal.get(Calendar.DAY_OF_MONTH);
@@ -339,10 +343,10 @@ public class WaterReadingPerDayService {
                 displayCal.set(Calendar.DAY_OF_MONTH, day);
                 String dateStr = dateFormat.format(displayCal.getTime());
 
-                // Keep the latest reading for each day
+                // Keep the latest reading for each day (comparing timestamps)
                 if (!dailyReadings.containsKey(day) ||
-                        Long.parseLong(reading.getFetchTimestamp()) > Long
-                                .parseLong(dailyReadings.get(day).getReading())) {
+                        Long.parseLong(reading.getTimestamp()) > // Changed from fetchTimestamp to timestamp
+                                Long.parseLong(dailyReadings.get(day).getReading())) {
                     dailyReadings.put(day, new SimplifiedWaterReading(
                             dateStr,
                             reading.getFlowReading()));

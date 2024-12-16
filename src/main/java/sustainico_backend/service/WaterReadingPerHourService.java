@@ -272,9 +272,13 @@ public class WaterReadingPerHourService {
             eav.put(":startTimestamp", new AttributeValue().withS(String.valueOf(startTimestamp)));
             eav.put(":endTimestamp", new AttributeValue().withS(String.valueOf(endTimestamp)));
 
+            Map<String, String> expressionAttributeNames = new HashMap<>();
+            expressionAttributeNames.put("#ts", "timestamp");
+
             DynamoDBQueryExpression<WaterReadingPerHour> queryExpression = new DynamoDBQueryExpression<WaterReadingPerHour>()
-                    .withKeyConditionExpression(
-                            "deviceId = :deviceId and fetchTimestamp between :startTimestamp and :endTimestamp")
+                    .withKeyConditionExpression("deviceId = :deviceId")
+                    .withFilterExpression("#ts between :startTimestamp and :endTimestamp")
+                    .withExpressionAttributeNames(expressionAttributeNames)
                     .withExpressionAttributeValues(eav);
 
             List<WaterReadingPerHour> readings = dynamoDBMapper.query(WaterReadingPerHour.class, queryExpression);
@@ -287,7 +291,7 @@ public class WaterReadingPerHourService {
 
             // Process each reading
             for (WaterReadingPerHour reading : readings) {
-                long timestamp = Long.parseLong(reading.getFetchTimestamp());
+                long timestamp = Long.parseLong(reading.getTimestamp()); // Changed from fetchTimestamp to timestamp
                 Calendar readingCal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata"));
                 readingCal.setTimeInMillis(timestamp * 1000);
                 int hour = readingCal.get(Calendar.HOUR_OF_DAY);
@@ -298,10 +302,10 @@ public class WaterReadingPerHourService {
                 displayCal.set(Calendar.MINUTE, 0);
                 String timeStr = timeFormat.format(displayCal.getTime());
 
-                // Keep the latest reading for each hour
+                // Keep the latest reading for each hour (comparing timestamps)
                 if (!hourlyReadings.containsKey(hour) ||
-                        Long.parseLong(reading.getFetchTimestamp()) > Long
-                                .parseLong(hourlyReadings.get(hour).getReading())) {
+                        Long.parseLong(reading.getTimestamp()) > // Changed from fetchTimestamp to timestamp
+                                Long.parseLong(hourlyReadings.get(hour).getReading())) {
                     hourlyReadings.put(hour, new SimplifiedWaterReading(
                             timeStr,
                             reading.getFlowReading()));
