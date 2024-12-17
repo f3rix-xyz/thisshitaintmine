@@ -124,4 +124,10 @@ public class NewWaterReadingController {
         return ResponseEntity.ok(consumptionStatus);
     }
 
+    @GetMapping("/{deviceId}/leakage-analysis")
+    public ResponseEntity<Map<String, Double>> getDailyLeakageValues(@PathVariable String deviceId) {
+        Map<String, Double> leakageValues = newWaterReadingService.analyzeDailyLeakage(deviceId);
+        return ResponseEntity.ok(leakageValues);
+    }
+
 }

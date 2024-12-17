@@ -493,4 +493,95 @@ public class NewWaterReadingService {
         }
     }
 
+    public Map<String, Double> analyzeDailyLeakage(String deviceId) {
+        try {
+            // Calculate timestamps for last 10 days
+            ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Kolkata"));
+            ZonedDateTime tenDaysAgo = now.minusDays(10).withHour(0).withMinute(0).withSecond(0);
+
+            long startTimestamp = tenDaysAgo.toEpochSecond();
+            long endTimestamp = now.toEpochSecond();
+
+            // Query parameters for DynamoDB
+            Map<String, AttributeValue> eav = new HashMap<>();
+            eav.put(":deviceId", new AttributeValue().withS(deviceId));
+            eav.put(":startTimestamp", new AttributeValue().withS(String.valueOf(startTimestamp)));
+            eav.put(":endTimestamp", new AttributeValue().withS(String.valueOf(endTimestamp)));
+
+            Map<String, String> expressionAttributeNames = new HashMap<>();
+            expressionAttributeNames.put("#ts", "timestamp");
+
+            DynamoDBQueryExpression<NewWaterReading> queryExpression = new DynamoDBQueryExpression<NewWaterReading>()
+                    .withKeyConditionExpression(
+                            "deviceId = :deviceId and #ts between :startTimestamp and :endTimestamp")
+                    .withExpressionAttributeNames(expressionAttributeNames)
+                    .withExpressionAttributeValues(eav);
+
+            List<NewWaterReading> readings = dynamoDBMapper.query(NewWaterReading.class, queryExpression);
+
+            // Create a TreeMap with reverse ordering comparison
+            Map<String, Double> dailyLeakage = new TreeMap<>((s1, s2) -> s2.compareTo(s1));
+
+            // Initialize all 10 days with 0 leakage
+            for (int i = 0; i < 10; i++) {
+                LocalDate date = now.minusDays(i).toLocalDate();
+                String dateStr = date.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+                dailyLeakage.put(dateStr, 0.0);
+            }
+
+            // Group readings by day, keeping only one entry per timestamp
+            Map<LocalDate, Map<String, NewWaterReading>> readingsByDay = readings.stream()
+                    .collect(Collectors.groupingBy(
+                            reading -> Instant.ofEpochSecond(Long.parseLong(reading.getTimestamp()))
+                                    .atZone(ZoneId.of("Asia/Kolkata"))
+                                    .toLocalDate(),
+                            Collectors.toMap(
+                                    NewWaterReading::getTimestamp,
+                                    reading -> reading,
+                                    (existing, replacement) -> existing // Keep first entry in case of duplicates
+                            )));
+
+            // Calculate leakage for each day
+            for (Map.Entry<LocalDate, Map<String, NewWaterReading>> dayEntry : readingsByDay.entrySet()) {
+                LocalDate date = dayEntry.getKey();
+                String dateStr = date.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+                double totalLeakage = 0.0;
+
+                // Process each unique timestamp entry for the day
+                for (NewWaterReading reading : dayEntry.getValue().values()) {
+                    int key = reading.getKey();
+                    double threshold = (25.0 / 24.0) * key;
+
+                    // Process intraDay values
+                    List<Integer> intraDayValues = reading.getIntraDay();
+
+                    // Convert each value to integer if it's in Map format
+                    List<Integer> processedValues = new ArrayList<>();
+                    for (Integer value : intraDayValues) {
+                        processedValues.add(value);
+                    }
+
+                    // Sum up values below threshold
+                    double dayLeakage = processedValues.stream()
+                            .mapToDouble(value -> value < threshold ? value : 0)
+                            .sum();
+
+                    totalLeakage += dayLeakage;
+                }
+
+                // Update the leakage value for the day
+                if (dailyLeakage.containsKey(dateStr)) {
+                    dailyLeakage.put(dateStr, totalLeakage);
+                }
+            }
+
+            return dailyLeakage;
+
+        } catch (Exception e) {
+            System.out.println("Error analyzing daily leakage: " + e.getMessage());
+            e.printStackTrace();
+            return new HashMap<>();
+        }
+    }
+
 }
