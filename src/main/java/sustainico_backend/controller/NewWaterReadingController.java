@@ -4,6 +4,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import sustainico_backend.Models.MaxFlowAlertResponse;
 import sustainico_backend.Models.NewWaterReading;
 import sustainico_backend.Models.SingleAlertResponse;
 import sustainico_backend.Models.StatusChangeResponse;
@@ -106,4 +108,11 @@ public class NewWaterReadingController {
         List<SingleAlertResponse> alertChanges = newWaterReadingService.getAlertChangesForLastThreeDays(deviceId);
         return ResponseEntity.ok(alertChanges);
     }
+
+    @GetMapping("/{deviceId}/maxflow-percentage")
+    public ResponseEntity<MaxFlowAlertResponse> getMaxFlowPercentage(@PathVariable String deviceId) {
+        MaxFlowAlertResponse response = newWaterReadingService.getYesterdayMaxFlowPercentage(deviceId);
+        return ResponseEntity.ok(response);
+    }
+
 }

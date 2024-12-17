@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import sustainico_backend.Models.LatestWaterReading;
+import sustainico_backend.Models.MaxFlowAlertResponse;
 import sustainico_backend.Models.NewWaterReading;
 import sustainico_backend.Models.SingleAlertResponse;
 import sustainico_backend.Models.StatusChangeResponse;
@@ -180,55 +181,83 @@ public class NewWaterReadingService {
             ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Kolkata"));
             ZonedDateTime threeDaysAgo = now.minusDays(3);
 
-            // Convert to epoch seconds
             long startTimestamp = threeDaysAgo.toEpochSecond();
             long endTimestamp = now.toEpochSecond();
+
+            System.out.println("\n=== Time Range ===");
+            System.out
+                    .println("Start Time: " + threeDaysAgo.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+            System.out.println("End Time: " + now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
 
             Map<String, AttributeValue> eav = new HashMap<>();
             eav.put(":deviceId", new AttributeValue().withS(deviceId));
             eav.put(":startTimestamp", new AttributeValue().withS(String.valueOf(startTimestamp)));
             eav.put(":endTimestamp", new AttributeValue().withS(String.valueOf(endTimestamp)));
 
+            Map<String, String> expressionAttributeNames = new HashMap<>();
+            expressionAttributeNames.put("#ts", "timestamp");
+
             DynamoDBQueryExpression<NewWaterReading> queryExpression = new DynamoDBQueryExpression<NewWaterReading>()
                     .withKeyConditionExpression(
-                            "deviceId = :deviceId and timestamp between :startTimestamp and :endTimestamp")
+                            "deviceId = :deviceId and #ts between :startTimestamp and :endTimestamp")
+                    .withExpressionAttributeNames(expressionAttributeNames)
                     .withExpressionAttributeValues(eav);
 
             List<NewWaterReading> readings = dynamoDBMapper.query(NewWaterReading.class, queryExpression);
 
-            // Process and filter readings with status changes (N:1)
+            System.out.println("\n=== Query Results ===");
+            System.out.println("Total readings found: " + readings.size());
+
             List<StatusChangeResponse> statusChanges = new ArrayList<>();
 
             for (NewWaterReading reading : readings) {
+                System.out.println("\n--- Processing Reading ---");
+                System.out.println("Reading Timestamp: " + reading.getTimestamp());
+                System.out.println("Raw Status: " + reading.getStatus());
+
                 Map<String, Boolean> changes = new HashMap<>();
                 boolean hasChange = false;
 
-                // Check each status field for N:1
-                for (Map.Entry<String, Boolean> entry : reading.getStatus().entrySet()) {
-                    if (entry.getValue()) { // If status is true (N:1)
-                        changes.put(entry.getKey(), true);
-                        hasChange = true;
+                Map<String, Boolean> status = reading.getStatus();
+                if (status != null) {
+                    for (Map.Entry<String, Boolean> entry : status.entrySet()) {
+                        String statusType = entry.getKey();
+                        Boolean isActive = entry.getValue();
+
+                        System.out.println("Checking Status: " + statusType + " = " + isActive);
+
+                        if (isActive != null && isActive) {
+                            changes.put(statusType, true);
+                            hasChange = true;
+                            System.out.println("Found active status: " + statusType);
+                        }
                     }
                 }
 
-                // If any status was N:1, add to response
                 if (hasChange) {
-                    // Convert epoch timestamp to readable format
                     ZonedDateTime readingTime = ZonedDateTime.ofInstant(
                             Instant.ofEpochSecond(Long.parseLong(reading.getTimestamp())),
                             ZoneId.of("Asia/Kolkata"));
-
                     String formattedTime = readingTime.format(
                             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
 
                     statusChanges.add(new StatusChangeResponse(formattedTime, changes));
+                    System.out.println("Added status change at: " + formattedTime);
                 }
+            }
+
+            System.out.println("\n=== Final Results ===");
+            System.out.println("Total status changes found: " + statusChanges.size());
+            for (StatusChangeResponse status : statusChanges) {
+                System.out.println("Time: " + status.getTimestamp() + ", Changes: " + status.getStatus());
             }
 
             return statusChanges;
 
         } catch (Exception e) {
-            // logger.warning("Error retrieving status changes: " + e.getMessage());
+            System.out.println("\n=== ERROR ===");
+            System.out.println("Error retrieving status changes: " + e.getMessage());
+            e.printStackTrace();
             return Collections.emptyList();
         }
     }
@@ -238,11 +267,9 @@ public class NewWaterReadingService {
 
     public List<SingleAlertResponse> getAlertChangesForLastThreeDays(String deviceId) {
         try {
-            // Calculate timestamp for 3 days ago
             ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Kolkata"));
             ZonedDateTime threeDaysAgo = now.minusDays(3);
 
-            // Convert to epoch seconds
             long startTimestamp = threeDaysAgo.toEpochSecond();
             long endTimestamp = now.toEpochSecond();
 
@@ -251,42 +278,139 @@ public class NewWaterReadingService {
             eav.put(":startTimestamp", new AttributeValue().withS(String.valueOf(startTimestamp)));
             eav.put(":endTimestamp", new AttributeValue().withS(String.valueOf(endTimestamp)));
 
+            Map<String, String> expressionAttributeNames = new HashMap<>();
+            expressionAttributeNames.put("#ts", "timestamp");
+
             DynamoDBQueryExpression<NewWaterReading> queryExpression = new DynamoDBQueryExpression<NewWaterReading>()
                     .withKeyConditionExpression(
-                            "deviceId = :deviceId and timestamp between :startTimestamp and :endTimestamp")
+                            "deviceId = :deviceId and #ts between :startTimestamp and :endTimestamp")
+                    .withExpressionAttributeNames(expressionAttributeNames)
                     .withExpressionAttributeValues(eav);
 
             List<NewWaterReading> readings = dynamoDBMapper.query(NewWaterReading.class, queryExpression);
 
-            // Process and filter readings with alert changes (N:1)
-            List<SingleAlertResponse> alertChanges = new ArrayList<>();
+            System.out.println("Total readings found: " + readings.size());
 
+            List<SingleAlertResponse> alertChanges = new ArrayList<>();
             Set<String> excludedAlerts = new HashSet<>(Arrays.asList("MaxFlow", "LeakFlow", "NoConsumption"));
 
             for (NewWaterReading reading : readings) {
-                // Convert epoch timestamp to readable format
+                System.out.println("\n--- Processing Reading ---");
+                System.out.println("Reading Timestamp: " + reading.getTimestamp());
+                System.out.println("Raw Alerts: " + reading.getAlerts());
+
                 ZonedDateTime readingTime = ZonedDateTime.ofInstant(
                         Instant.ofEpochSecond(Long.parseLong(reading.getTimestamp())),
                         ZoneId.of("Asia/Kolkata"));
+                String formattedTime = readingTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
 
-                String formattedTime = readingTime.format(
-                        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+                Map<String, Boolean> alerts = reading.getAlerts();
+                if (alerts != null) {
+                    for (Map.Entry<String, Boolean> entry : alerts.entrySet()) {
+                        String alertType = entry.getKey();
+                        Boolean isAlert = entry.getValue();
 
-                // Check each alert field for N:1
-                for (Map.Entry<String, Boolean> entry : reading.getAlerts().entrySet()) {
-                    String alertType = entry.getKey();
-                    if (!excludedAlerts.contains(alertType) && entry.getValue()) {
-                        alertChanges.add(new SingleAlertResponse(alertType, formattedTime));
+                        System.out.println("\nChecking Alert: " + alertType);
+                        System.out.println("Alert Value: " + isAlert);
+                        System.out.println("Is Excluded: " + excludedAlerts.contains(alertType));
+
+                        // Check if the alert value is true (equivalent to N:1)
+                        if (!excludedAlerts.contains(alertType) && isAlert != null && isAlert) {
+                            System.out.println(">>> Adding alert to response: " + alertType);
+                            alertChanges.add(new SingleAlertResponse(alertType, formattedTime));
+                        }
                     }
                 }
+            }
+
+            System.out.println("\n=== Final Results ===");
+            System.out.println("Total alerts found: " + alertChanges.size());
+            for (SingleAlertResponse alert : alertChanges) {
+                System.out.println("Alert: " + alert.getAlert() + " at " + alert.getTimestamp());
             }
 
             return alertChanges;
 
         } catch (Exception e) {
+            System.out.println("\n=== ERROR ===");
             System.out.println("Error retrieving alert changes: " + e.getMessage());
             e.printStackTrace();
             return Collections.emptyList();
+        }
+    }
+
+    public MaxFlowAlertResponse getYesterdayMaxFlowPercentage(String deviceId) {
+        try {
+            // Calculate yesterday's start and end timestamps
+            ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Kolkata"));
+            ZonedDateTime yesterdayStart = now.minusDays(1).withHour(0).withMinute(0).withSecond(0);
+            ZonedDateTime yesterdayEnd = yesterdayStart.withHour(23).withMinute(59).withSecond(59);
+
+            String dateStr = yesterdayStart.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+            long startTimestamp = yesterdayStart.toEpochSecond();
+            long endTimestamp = yesterdayEnd.toEpochSecond();
+
+            System.out.println("Fetching data for: " + dateStr);
+            System.out.println("Start timestamp: " + startTimestamp);
+            System.out.println("End timestamp: " + endTimestamp);
+
+            Map<String, AttributeValue> eav = new HashMap<>();
+            eav.put(":deviceId", new AttributeValue().withS(deviceId));
+            eav.put(":startTimestamp", new AttributeValue().withS(String.valueOf(startTimestamp)));
+            eav.put(":endTimestamp", new AttributeValue().withS(String.valueOf(endTimestamp)));
+
+            Map<String, String> expressionAttributeNames = new HashMap<>();
+            expressionAttributeNames.put("#ts", "timestamp");
+
+            DynamoDBQueryExpression<NewWaterReading> queryExpression = new DynamoDBQueryExpression<NewWaterReading>()
+                    .withKeyConditionExpression(
+                            "deviceId = :deviceId and #ts between :startTimestamp and :endTimestamp")
+                    .withExpressionAttributeNames(expressionAttributeNames)
+                    .withExpressionAttributeValues(eav);
+
+            List<NewWaterReading> readings = dynamoDBMapper.query(NewWaterReading.class, queryExpression);
+
+            System.out.println("Found " + readings.size() + " readings");
+
+            // Calculate MaxFlow statistics
+            int totalReadings = readings.size();
+            int maxFlowAlerts = 0;
+
+            for (NewWaterReading reading : readings) {
+                Map<String, Boolean> alerts = reading.getAlerts();
+                if (alerts != null &&
+                        alerts.containsKey("MaxFlow") &&
+                        alerts.get("MaxFlow") != null &&
+                        alerts.get("MaxFlow")) {
+                    maxFlowAlerts++;
+                    System.out.println("Found MaxFlow alert at timestamp: " + reading.getTimestamp());
+                }
+            }
+
+            double percentage = totalReadings > 0 ? ((double) maxFlowAlerts / totalReadings) * 100 : 0;
+
+            System.out.println("Total Readings: " + totalReadings);
+            System.out.println("MaxFlow Alerts: " + maxFlowAlerts);
+            System.out.println("Percentage: " + percentage + "%");
+
+            MaxFlowAlertResponse response = new MaxFlowAlertResponse();
+            response.setPercentage(Math.round(percentage * 100.0) / 100.0);
+            response.setTotalReadings(totalReadings);
+            response.setMaxFlowAlerts(maxFlowAlerts);
+            response.setDate(dateStr);
+
+            return response;
+
+        } catch (Exception e) {
+            System.out.println("Error calculating MaxFlow percentage: " + e.getMessage());
+            e.printStackTrace();
+
+            MaxFlowAlertResponse response = new MaxFlowAlertResponse();
+            response.setPercentage(0.0);
+            response.setTotalReadings(0);
+            response.setMaxFlowAlerts(0);
+            response.setDate("Error");
+            return response;
         }
     }
 
