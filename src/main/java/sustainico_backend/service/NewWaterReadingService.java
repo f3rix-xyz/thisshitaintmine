@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import sustainico_backend.Models.LatestWaterReading;
 import sustainico_backend.Models.NewWaterReading;
+import sustainico_backend.Models.SingleAlertResponse;
 import sustainico_backend.Models.StatusChangeResponse;
 import sustainico_backend.Models.WaterReading;
 import sustainico_backend.rep.LatestWaterReadingRepository;
@@ -27,10 +28,13 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 @Service
 public class NewWaterReadingService {
@@ -228,4 +232,62 @@ public class NewWaterReadingService {
             return Collections.emptyList();
         }
     }
+
+    private static final Set<String> EXCLUDED_ALERTS = new HashSet<>(Arrays.asList(
+            "MaxFlow", "LeakFlow", "NoConsumption"));
+
+    public List<SingleAlertResponse> getAlertChangesForLastThreeDays(String deviceId) {
+        try {
+            // Calculate timestamp for 3 days ago
+            ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Kolkata"));
+            ZonedDateTime threeDaysAgo = now.minusDays(3);
+
+            // Convert to epoch seconds
+            long startTimestamp = threeDaysAgo.toEpochSecond();
+            long endTimestamp = now.toEpochSecond();
+
+            Map<String, AttributeValue> eav = new HashMap<>();
+            eav.put(":deviceId", new AttributeValue().withS(deviceId));
+            eav.put(":startTimestamp", new AttributeValue().withS(String.valueOf(startTimestamp)));
+            eav.put(":endTimestamp", new AttributeValue().withS(String.valueOf(endTimestamp)));
+
+            DynamoDBQueryExpression<NewWaterReading> queryExpression = new DynamoDBQueryExpression<NewWaterReading>()
+                    .withKeyConditionExpression(
+                            "deviceId = :deviceId and timestamp between :startTimestamp and :endTimestamp")
+                    .withExpressionAttributeValues(eav);
+
+            List<NewWaterReading> readings = dynamoDBMapper.query(NewWaterReading.class, queryExpression);
+
+            // Process and filter readings with alert changes (N:1)
+            List<SingleAlertResponse> alertChanges = new ArrayList<>();
+
+            Set<String> excludedAlerts = new HashSet<>(Arrays.asList("MaxFlow", "LeakFlow", "NoConsumption"));
+
+            for (NewWaterReading reading : readings) {
+                // Convert epoch timestamp to readable format
+                ZonedDateTime readingTime = ZonedDateTime.ofInstant(
+                        Instant.ofEpochSecond(Long.parseLong(reading.getTimestamp())),
+                        ZoneId.of("Asia/Kolkata"));
+
+                String formattedTime = readingTime.format(
+                        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+
+                // Check each alert field for N:1
+                for (Map.Entry<String, Boolean> entry : reading.getAlerts().entrySet()) {
+                    String alertType = entry.getKey();
+                    if (!excludedAlerts.contains(alertType) && entry.getValue()) {
+                        alertChanges.add(new SingleAlertResponse(alertType, formattedTime));
+                    }
+                }
+            }
+
+            return alertChanges;
+
+        } catch (Exception e) {
+            System.out.println("Error retrieving alert changes: " + e.getMessage());
+            e.printStackTrace();
+            return Collections.emptyList();
+        }
+    }
+
 }

@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sustainico_backend.Models.NewWaterReading;
+import sustainico_backend.Models.SingleAlertResponse;
 import sustainico_backend.Models.StatusChangeResponse;
 import sustainico_backend.service.NewWaterReadingService;
 
@@ -98,5 +99,11 @@ public class NewWaterReadingController {
     public ResponseEntity<List<StatusChangeResponse>> getStatusChanges(@PathVariable String deviceId) {
         List<StatusChangeResponse> statusChanges = newWaterReadingService.getStatusChangesForLastThreeDays(deviceId);
         return ResponseEntity.ok(statusChanges);
+    }
+
+    @GetMapping("/{deviceId}/alerts")
+    public ResponseEntity<List<SingleAlertResponse>> getAlertChanges(@PathVariable String deviceId) {
+        List<SingleAlertResponse> alertChanges = newWaterReadingService.getAlertChangesForLastThreeDays(deviceId);
+        return ResponseEntity.ok(alertChanges);
     }
 }
