@@ -24,6 +24,7 @@ import sustainico_backend.rep.WaterReadingRepository;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -36,6 +37,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 @Service
 public class NewWaterReadingService {
@@ -411,6 +414,82 @@ public class NewWaterReadingService {
             response.setMaxFlowAlerts(0);
             response.setDate("Error");
             return response;
+        }
+    }
+
+    public Map<String, String> analyzeMonthlyConsumption(String deviceId, int month, int year) {
+        try {
+            // Calculate start and end timestamps for the given month
+            ZonedDateTime startOfMonth = ZonedDateTime
+                    .of(year, month, 1, 0, 0, 0, 0, ZoneId.of("Asia/Kolkata"));
+            ZonedDateTime endOfMonth = startOfMonth.plusMonths(1).minusNanos(1);
+
+            long startTimestamp = startOfMonth.toEpochSecond();
+            long endTimestamp = endOfMonth.toEpochSecond();
+
+            // Query parameters for DynamoDB
+            Map<String, AttributeValue> eav = new HashMap<>();
+            eav.put(":deviceId", new AttributeValue().withS(deviceId));
+            eav.put(":startTimestamp", new AttributeValue().withS(String.valueOf(startTimestamp)));
+            eav.put(":endTimestamp", new AttributeValue().withS(String.valueOf(endTimestamp)));
+
+            Map<String, String> expressionAttributeNames = new HashMap<>();
+            expressionAttributeNames.put("#ts", "timestamp");
+
+            DynamoDBQueryExpression<NewWaterReading> queryExpression = new DynamoDBQueryExpression<NewWaterReading>()
+                    .withKeyConditionExpression(
+                            "deviceId = :deviceId and #ts between :startTimestamp and :endTimestamp")
+                    .withExpressionAttributeNames(expressionAttributeNames)
+                    .withExpressionAttributeValues(eav);
+
+            List<NewWaterReading> readings = dynamoDBMapper.query(NewWaterReading.class, queryExpression);
+
+            // Group readings by day
+            Map<LocalDate, List<NewWaterReading>> readingsByDay = readings.stream()
+                    .collect(Collectors.groupingBy(reading -> {
+                        long timestamp = Long.parseLong(reading.getTimestamp());
+                        return Instant.ofEpochSecond(timestamp)
+                                .atZone(ZoneId.of("Asia/Kolkata"))
+                                .toLocalDate();
+                    }));
+
+            // Analyze consumption status for each day
+            Map<String, String> dailyConsumptionStatus = new TreeMap<>(); // TreeMap for sorted dates
+            YearMonth yearMonth = YearMonth.of(year, month);
+
+            // Initialize all days of the month
+            for (int day = 1; day <= yearMonth.lengthOfMonth(); day++) {
+                LocalDate date = LocalDate.of(year, month, day);
+                String dateStr = date.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+                dailyConsumptionStatus.put(dateStr, "consumption");
+            }
+
+            // Update status based on readings
+            for (Map.Entry<LocalDate, List<NewWaterReading>> entry : readingsByDay.entrySet()) {
+                LocalDate date = entry.getKey();
+                List<NewWaterReading> dailyReadings = entry.getValue();
+                String dateStr = date.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+
+                boolean allNoConsumption = dailyReadings.stream()
+                        .allMatch(reading -> {
+                            Map<String, Boolean> alerts = reading.getAlerts();
+                            return alerts != null &&
+                                    alerts.containsKey("NoConsumption") &&
+                                    alerts.get("NoConsumption") != null &&
+                                    alerts.get("NoConsumption");
+                        });
+
+                if (allNoConsumption && !dailyReadings.isEmpty()) {
+                    dailyConsumptionStatus.put(dateStr, "no-consumption");
+                }
+            }
+
+            return dailyConsumptionStatus;
+
+        } catch (Exception e) {
+            System.out.println("Error analyzing monthly consumption: " + e.getMessage());
+            e.printStackTrace();
+            return new HashMap<>();
         }
     }
 

@@ -115,4 +115,13 @@ public class NewWaterReadingController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/{deviceId}/consumption-analysis")
+    public ResponseEntity<Map<String, String>> getDailyConsumptionStatus(
+            @PathVariable String deviceId,
+            @RequestParam int month,
+            @RequestParam int year) {
+        Map<String, String> consumptionStatus = newWaterReadingService.analyzeMonthlyConsumption(deviceId, month, year);
+        return ResponseEntity.ok(consumptionStatus);
+    }
+
 }
