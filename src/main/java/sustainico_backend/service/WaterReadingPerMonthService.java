@@ -246,7 +246,7 @@ public class WaterReadingPerMonthService {
             calendar.clear();
             calendar.set(Calendar.YEAR, year);
 
-            // Set time to start of year (Jan 1, 00:00:00)
+            // Set time to start of year
             calendar.set(Calendar.MONTH, Calendar.JANUARY);
             calendar.set(Calendar.DAY_OF_MONTH, 1);
             calendar.set(Calendar.HOUR_OF_DAY, 0);
@@ -254,12 +254,8 @@ public class WaterReadingPerMonthService {
             calendar.set(Calendar.SECOND, 0);
             long startTimestamp = calendar.getTimeInMillis() / 1000;
 
-            // Set time to end of year (Dec 31, 23:59:59)
-            calendar.set(Calendar.MONTH, Calendar.DECEMBER);
-            calendar.set(Calendar.DAY_OF_MONTH, 31);
-            calendar.set(Calendar.HOUR_OF_DAY, 23);
-            calendar.set(Calendar.MINUTE, 59);
-            calendar.set(Calendar.SECOND, 59);
+            // Set time to start of next year to get readings for December
+            calendar.add(Calendar.YEAR, 1);
             long endTimestamp = calendar.getTimeInMillis() / 1000;
 
             Map<String, AttributeValue> eav = new HashMap<>();
@@ -276,58 +272,81 @@ public class WaterReadingPerMonthService {
                     .withExpressionAttributeNames(expressionAttributeNames)
                     .withExpressionAttributeValues(eav);
 
-            List<WaterReadingPerMonth> readings = dynamoDBMapper.query(WaterReadingPerMonth.class, queryExpression);
+            List<WaterReadingPerMonth> readings = new ArrayList<>(
+                    dynamoDBMapper.query(WaterReadingPerMonth.class, queryExpression));
+
+            // Sort readings by timestamp
+            Collections.sort(readings, (r1, r2) -> Long.compare(
+                    Long.parseLong(r1.getTimestamp()),
+                    Long.parseLong(r2.getTimestamp())));
+
+            // Remove duplicates
+            List<WaterReadingPerMonth> uniqueReadings = new ArrayList<>();
+            String lastTimestamp = null;
+            for (WaterReadingPerMonth reading : readings) {
+                if (!reading.getTimestamp().equals(lastTimestamp)) {
+                    uniqueReadings.add(reading);
+                    lastTimestamp = reading.getTimestamp();
+                }
+            }
 
             // Format for displaying month
             SimpleDateFormat monthFormat = new SimpleDateFormat("MMMM yyyy");
             monthFormat.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata"));
 
-            Map<Integer, SimplifiedWaterReading> monthlyReadings = new TreeMap<>();
+            Map<Integer, SimplifiedWaterReading> monthlyConsumption = new TreeMap<>();
 
-            // Process each reading
-            for (WaterReadingPerMonth reading : readings) {
-                long timestamp = Long.parseLong(reading.getTimestamp()); // Changed from fetchTimestamp to timestamp
+            // Calculate consumption between consecutive readings
+            for (int i = 0; i < uniqueReadings.size() - 1; i++) {
+                WaterReadingPerMonth currentReading = uniqueReadings.get(i);
+                WaterReadingPerMonth nextReading = uniqueReadings.get(i + 1);
+
+                long timestamp = Long.parseLong(currentReading.getTimestamp());
                 Calendar readingCal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata"));
                 readingCal.setTimeInMillis(timestamp * 1000);
                 int month = readingCal.get(Calendar.MONTH);
 
-                // Set the time to the first day of the month for display
+                // Calculate consumption
+                double currentValue = Double.parseDouble(currentReading.getFlowReading());
+                double nextValue = Double.parseDouble(nextReading.getFlowReading());
+                double consumption = nextValue - currentValue;
+
+                System.out.println("\nCalculating for month " + (month + 1) + ":");
+                System.out.println("Current month reading: " + currentValue);
+                System.out.println("Next month reading: " + nextValue);
+                System.out.println("Water flown in month " + (month + 1) + ": " + consumption);
+
                 Calendar displayCal = (Calendar) calendar.clone();
+                displayCal.add(Calendar.YEAR, -1); // Go back to original year
                 displayCal.set(Calendar.MONTH, month);
                 displayCal.set(Calendar.DAY_OF_MONTH, 1);
                 String monthStr = monthFormat.format(displayCal.getTime());
 
-                // Keep the latest reading for each month (comparing timestamps, not
-                // fetchTimestamps)
-                if (!monthlyReadings.containsKey(month) ||
-                        Long.parseLong(reading.getTimestamp()) > Long
-                                .parseLong(monthlyReadings.get(month).getReading())) {
-                    monthlyReadings.put(month, new SimplifiedWaterReading(
-                            monthStr,
-                            reading.getFlowReading()));
-                }
+                monthlyConsumption.put(month, new SimplifiedWaterReading(
+                        monthStr,
+                        String.format("%.2f", Math.max(consumption, 0))));
             }
 
-            // Fill in missing months with zero readings
+            // Fill in all months
             List<SimplifiedWaterReading> result = new ArrayList<>();
+            calendar.add(Calendar.YEAR, -1); // Go back to original year
             for (int month = 0; month < 12; month++) {
                 Calendar displayCal = (Calendar) calendar.clone();
                 displayCal.set(Calendar.MONTH, month);
                 displayCal.set(Calendar.DAY_OF_MONTH, 1);
                 String monthStr = monthFormat.format(displayCal.getTime());
 
-                result.add(monthlyReadings.getOrDefault(month,
-                        new SimplifiedWaterReading(monthStr, "0")));
+                result.add(monthlyConsumption.getOrDefault(month,
+                        new SimplifiedWaterReading(monthStr, "0.00")));
             }
 
             return result;
 
-        } catch (NumberFormatException e) {
-            logger.warning("Error parsing year: " + e.getMessage());
-            return Collections.emptyList();
         } catch (Exception e) {
-            logger.warning("Error retrieving monthly readings: " + e.getMessage());
+            System.out.println("Error: " + e.getMessage());
+            e.printStackTrace();
             return Collections.emptyList();
         }
     }
+
 }

@@ -261,10 +261,8 @@ public class WaterReadingPerHourService {
             calendar.set(Calendar.SECOND, 0);
             long startTimestamp = calendar.getTimeInMillis() / 1000;
 
-            // Set time to end of day (23:59:59)
-            calendar.set(Calendar.HOUR_OF_DAY, 23);
-            calendar.set(Calendar.MINUTE, 59);
-            calendar.set(Calendar.SECOND, 59);
+            // Set time to start of next day (00:00:00) to get readings for last hour
+            calendar.add(Calendar.DAY_OF_MONTH, 1);
             long endTimestamp = calendar.getTimeInMillis() / 1000;
 
             Map<String, AttributeValue> eav = new HashMap<>();
@@ -281,56 +279,88 @@ public class WaterReadingPerHourService {
                     .withExpressionAttributeNames(expressionAttributeNames)
                     .withExpressionAttributeValues(eav);
 
-            List<WaterReadingPerHour> readings = dynamoDBMapper.query(WaterReadingPerHour.class, queryExpression);
+            List<WaterReadingPerHour> readings = new ArrayList<>(
+                    dynamoDBMapper.query(WaterReadingPerHour.class, queryExpression));
+
+            // Sort readings by timestamp
+            Collections.sort(readings, (r1, r2) -> {
+                try {
+                    return Long.compare(
+                            Long.parseLong(r1.getTimestamp()),
+                            Long.parseLong(r2.getTimestamp()));
+                } catch (NumberFormatException e) {
+                    return 0;
+                }
+            });
+
+            // Remove duplicates
+            List<WaterReadingPerHour> uniqueReadings = new ArrayList<>();
+            String lastTimestamp = null;
+            for (WaterReadingPerHour reading : readings) {
+                if (!reading.getTimestamp().equals(lastTimestamp)) {
+                    uniqueReadings.add(reading);
+                    lastTimestamp = reading.getTimestamp();
+                }
+            }
 
             // Format for displaying time
             SimpleDateFormat timeFormat = new SimpleDateFormat("hh:mm a");
             timeFormat.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata"));
 
-            Map<Integer, SimplifiedWaterReading> hourlyReadings = new TreeMap<>();
+            Map<Integer, SimplifiedWaterReading> hourlyConsumption = new TreeMap<>();
 
-            // Process each reading
-            for (WaterReadingPerHour reading : readings) {
-                long timestamp = Long.parseLong(reading.getTimestamp()); // Changed from fetchTimestamp to timestamp
+            // Calculate consumption between consecutive readings
+            for (int i = 0; i < uniqueReadings.size() - 1; i++) {
+                WaterReadingPerHour currentReading = uniqueReadings.get(i);
+                WaterReadingPerHour nextReading = uniqueReadings.get(i + 1);
+
+                // Get hour of current reading (consumption will be attributed to this hour)
+                long timestamp = Long.parseLong(currentReading.getTimestamp());
                 Calendar readingCal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata"));
                 readingCal.setTimeInMillis(timestamp * 1000);
                 int hour = readingCal.get(Calendar.HOUR_OF_DAY);
 
-                // Set the time to the exact hour for display
+                // Calculate consumption
+                double currentValue = Double.parseDouble(currentReading.getFlowReading());
+                double nextValue = Double.parseDouble(nextReading.getFlowReading());
+                double consumption = nextValue - currentValue;
+
+                System.out.println("\nCalculating for hour " + hour + ":");
+                System.out.println("Current hour reading: " + currentValue);
+                System.out.println("Next hour reading: " + nextValue);
+                System.out.println("Water flown between " + hour + "-" + (hour + 1) + ": " + consumption);
+
+                // Format time for display
                 Calendar displayCal = (Calendar) calendar.clone();
+                displayCal.add(Calendar.DAY_OF_MONTH, -1); // Go back to original date
                 displayCal.set(Calendar.HOUR_OF_DAY, hour);
                 displayCal.set(Calendar.MINUTE, 0);
                 String timeStr = timeFormat.format(displayCal.getTime());
 
-                // Keep the latest reading for each hour (comparing timestamps)
-                if (!hourlyReadings.containsKey(hour) ||
-                        Long.parseLong(reading.getTimestamp()) > // Changed from fetchTimestamp to timestamp
-                                Long.parseLong(hourlyReadings.get(hour).getReading())) {
-                    hourlyReadings.put(hour, new SimplifiedWaterReading(
-                            timeStr,
-                            reading.getFlowReading()));
-                }
+                hourlyConsumption.put(hour, new SimplifiedWaterReading(
+                        timeStr,
+                        String.format("%.2f", Math.max(consumption, 0))));
             }
 
-            // Fill in missing hours with zero readings
+            // Fill in all hours
             List<SimplifiedWaterReading> result = new ArrayList<>();
             for (int hour = 0; hour < 24; hour++) {
                 Calendar displayCal = (Calendar) calendar.clone();
+                displayCal.add(Calendar.DAY_OF_MONTH, -1); // Go back to original date
                 displayCal.set(Calendar.HOUR_OF_DAY, hour);
                 displayCal.set(Calendar.MINUTE, 0);
                 String timeStr = timeFormat.format(displayCal.getTime());
 
-                result.add(hourlyReadings.getOrDefault(hour,
-                        new SimplifiedWaterReading(timeStr, "0")));
+                SimplifiedWaterReading reading = hourlyConsumption.getOrDefault(hour,
+                        new SimplifiedWaterReading(timeStr, "0.00"));
+                result.add(reading);
             }
 
             return result;
 
-        } catch (ParseException e) {
-            logger.warning("Error parsing date: " + e.getMessage());
-            return Collections.emptyList();
         } catch (Exception e) {
-            logger.warning("Error retrieving hourly readings: " + e.getMessage());
+            System.out.println("Error: " + e.getMessage());
+            e.printStackTrace();
             return Collections.emptyList();
         }
     }

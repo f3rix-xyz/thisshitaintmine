@@ -287,7 +287,6 @@ public class WaterReadingPerDayService {
 
     public List<SimplifiedWaterReading> getDailyReadingsForMonth(String deviceId, String date) {
         try {
-            // Parse the input date (expecting format like "2024-03")
             SimpleDateFormat yearMonthFormat = new SimpleDateFormat("yyyy-MM");
             yearMonthFormat.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata"));
 
@@ -295,18 +294,15 @@ public class WaterReadingPerDayService {
             Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata"));
             calendar.setTime(parsedDate);
 
-            // Set time to start of month (1st day, 00:00:00)
+            // Set time to start of month
             calendar.set(Calendar.DAY_OF_MONTH, 1);
             calendar.set(Calendar.HOUR_OF_DAY, 0);
             calendar.set(Calendar.MINUTE, 0);
             calendar.set(Calendar.SECOND, 0);
             long startTimestamp = calendar.getTimeInMillis() / 1000;
 
-            // Set time to end of month (last day, 23:59:59)
-            calendar.set(Calendar.DAY_OF_MONTH, calendar.getActualMaximum(Calendar.DAY_OF_MONTH));
-            calendar.set(Calendar.HOUR_OF_DAY, 23);
-            calendar.set(Calendar.MINUTE, 59);
-            calendar.set(Calendar.SECOND, 59);
+            // Set time to start of next month to get readings for last day
+            calendar.add(Calendar.MONTH, 1);
             long endTimestamp = calendar.getTimeInMillis() / 1000;
 
             Map<String, AttributeValue> eav = new HashMap<>();
@@ -323,55 +319,78 @@ public class WaterReadingPerDayService {
                     .withExpressionAttributeNames(expressionAttributeNames)
                     .withExpressionAttributeValues(eav);
 
-            List<WaterReadingPerDay> readings = dynamoDBMapper.query(WaterReadingPerDay.class, queryExpression);
+            List<WaterReadingPerDay> readings = new ArrayList<>(
+                    dynamoDBMapper.query(WaterReadingPerDay.class, queryExpression));
+
+            // Sort readings by timestamp
+            Collections.sort(readings, (r1, r2) -> Long.compare(
+                    Long.parseLong(r1.getTimestamp()),
+                    Long.parseLong(r2.getTimestamp())));
+
+            // Remove duplicates
+            List<WaterReadingPerDay> uniqueReadings = new ArrayList<>();
+            String lastTimestamp = null;
+            for (WaterReadingPerDay reading : readings) {
+                if (!reading.getTimestamp().equals(lastTimestamp)) {
+                    uniqueReadings.add(reading);
+                    lastTimestamp = reading.getTimestamp();
+                }
+            }
 
             // Format for displaying date
             SimpleDateFormat dateFormat = new SimpleDateFormat("dd MMM yyyy");
             dateFormat.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata"));
 
-            Map<Integer, SimplifiedWaterReading> dailyReadings = new TreeMap<>();
+            Map<Integer, SimplifiedWaterReading> dailyConsumption = new TreeMap<>();
 
-            // Process each reading
-            for (WaterReadingPerDay reading : readings) {
-                long timestamp = Long.parseLong(reading.getTimestamp()); // Changed from fetchTimestamp to timestamp
+            // Calculate consumption between consecutive readings
+            for (int i = 0; i < uniqueReadings.size() - 1; i++) {
+                WaterReadingPerDay currentReading = uniqueReadings.get(i);
+                WaterReadingPerDay nextReading = uniqueReadings.get(i + 1);
+
+                long timestamp = Long.parseLong(currentReading.getTimestamp());
                 Calendar readingCal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata"));
                 readingCal.setTimeInMillis(timestamp * 1000);
                 int day = readingCal.get(Calendar.DAY_OF_MONTH);
 
-                // Set the time to the exact day for display
+                // Calculate consumption
+                double currentValue = Double.parseDouble(currentReading.getFlowReading());
+                double nextValue = Double.parseDouble(nextReading.getFlowReading());
+                double consumption = nextValue - currentValue;
+
+                System.out.println("\nCalculating for day " + day + ":");
+                System.out.println("Current day reading: " + currentValue);
+                System.out.println("Next day reading: " + nextValue);
+                System.out.println("Water flown between day " + day + "-" + (day + 1) + ": " + consumption);
+
                 Calendar displayCal = (Calendar) calendar.clone();
+                displayCal.add(Calendar.MONTH, -1); // Go back to original month
                 displayCal.set(Calendar.DAY_OF_MONTH, day);
                 String dateStr = dateFormat.format(displayCal.getTime());
 
-                // Keep the latest reading for each day (comparing timestamps)
-                if (!dailyReadings.containsKey(day) ||
-                        Long.parseLong(reading.getTimestamp()) > // Changed from fetchTimestamp to timestamp
-                                Long.parseLong(dailyReadings.get(day).getReading())) {
-                    dailyReadings.put(day, new SimplifiedWaterReading(
-                            dateStr,
-                            reading.getFlowReading()));
-                }
+                dailyConsumption.put(day, new SimplifiedWaterReading(
+                        dateStr,
+                        String.format("%.2f", Math.max(consumption, 0))));
             }
 
-            // Fill in missing days with zero readings
+            // Fill in all days
             List<SimplifiedWaterReading> result = new ArrayList<>();
+            calendar.add(Calendar.MONTH, -1); // Go back to original month
             int daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH);
             for (int day = 1; day <= daysInMonth; day++) {
                 Calendar displayCal = (Calendar) calendar.clone();
                 displayCal.set(Calendar.DAY_OF_MONTH, day);
                 String dateStr = dateFormat.format(displayCal.getTime());
 
-                result.add(dailyReadings.getOrDefault(day,
-                        new SimplifiedWaterReading(dateStr, "0")));
+                result.add(dailyConsumption.getOrDefault(day,
+                        new SimplifiedWaterReading(dateStr, "0.00")));
             }
 
             return result;
 
-        } catch (ParseException e) {
-            logger.warning("Error parsing date: " + e.getMessage());
-            return Collections.emptyList();
         } catch (Exception e) {
-            logger.warning("Error retrieving daily readings: " + e.getMessage());
+            System.out.println("Error: " + e.getMessage());
+            e.printStackTrace();
             return Collections.emptyList();
         }
     }
