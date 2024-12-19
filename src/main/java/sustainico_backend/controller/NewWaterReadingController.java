@@ -18,6 +18,8 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/newWaterReading")
+@CrossOrigin(origins = "*")
+
 public class NewWaterReadingController {
 
     private final NewWaterReadingService newWaterReadingService;
